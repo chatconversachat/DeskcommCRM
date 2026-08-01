@@ -1,14 +1,15 @@
 # Stack local de dependências externas para o DeskcommCRM.
 #
-# Sobe apenas o WAHA (Plus / NOWEB) pra desenvolvimento. Postgres + Auth + Storage
-# vêm do Supabase Cloud (ou supabase local CLI separadamente, conforme o time preferir).
+# Sobe WAHA (Plus / NOWEB) + Redis local com fachada REST compatível Upstash
+# (serverless-redis-http) pra desenvolvimento. Postgres + Auth + Storage vêm do
+# Supabase Cloud (ou supabase local CLI separadamente, conforme o time preferir).
 #
-# Uso:
-#   1. Copie .env.example -> .env.local e preencha WAHA_API_KEY (plaintext)
-#   2. Gere o hash: echo -n "$WAHA_API_KEY" | shasum -a 512 | awk '{print $1}'
-#   3. Cole esse hash em WAHA_API_KEY abaixo (NÃO o plaintext)
-#   4. docker compose up -d
-#   5. Acesse http://localhost:3030/dashboard/ (UI do WAHA Plus)
+# Uso (scripts/install-local-dev.sh já faz tudo isso sozinho):
+#   1. Preencha .env.local (WAHA_API_KEY_SHA512, WAHA_HMAC_SECRET, SRH_TOKEN)
+#   2. Garanta que existe um `.env` na raiz (mesmo vazio — o serviço `worker`
+#      usa `env_file: [.env, .env.local]` e o Compose erra se o arquivo não existir)
+#   3. docker compose --env-file .env.local up -d
+#   4. Acesse http://localhost:3030/dashboard/ (UI do WAHA Plus)
 #      (host port 3030 — :3000 fica reservado pra outros dev tools como Remotion)
 #
 # Em prod, WAHA roda em VPS dedicada (Hostgator) atrás de Nginx (proxy_buffering off
@@ -70,6 +71,14 @@ services:
       # dentro do container, localhost é o próprio worker — o WAHA está na rede
       # do compose (serviço waha, porta interna 3000). Sobrepõe o .env.local.
       WAHA_API_BASE_URL: http://waha:3000
+      # SUPABASE_DB_URL do .env.local usa 127.0.0.1 (correto pro host, onde
+      # `pnpm dev` roda) — dentro do container isso resolveria pro próprio
+      # worker, não pro Postgres do Supabase local. host.docker.internal
+      # aponta pro host; SUPABASE_DB_URL_DOCKER (gerado pelo
+      # install-local-dev.sh) já vem com esse host trocado, mesma porta.
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL_DOCKER}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8787:8787"
     healthcheck:
@@ -79,6 +88,36 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # Redis local + fachada REST compatível Upstash, pra rate limit/idempotência
+  # sem precisar de conta Upstash real em dev. Mesma receita do
+  # docker-compose.prod.yml (hostgator-setup-kit/install.sh).
+  redis:
+    image: redis:7-alpine
+    container_name: deskcomm-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  srh:
+    # serverless-redis-http: fala o REST do Upstash sobre o redis normal, mantendo
+    # o SDK @upstash/redis sem tocar código.
+    image: hiett/serverless-redis-http:latest
+    container_name: deskcomm-srh
+    restart: unless-stopped
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${SRH_TOKEN}
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "64380:80"
 
 volumes:
   waha-data:

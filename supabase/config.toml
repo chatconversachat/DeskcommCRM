@@ -6,19 +6,28 @@ project_id = "deskcomm-crm"
 
 [api]
 enabled = true
-port = 54321
+port = 64321
 schemas = ["public", "storage", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
-port = 54322
-shadow_port = 54320
+port = 64322
+shadow_port = 64320
 major_version = 17
+
+# A fonte da verdade pra schema fresco é supabase/baseline.sql (aplicado via
+# psql pelo scripts/install-local-dev.sh), não o replay de supabase/migrations/*
+# — a cadeia de migrations tem uma quebra histórica de ordenação (0010 assume
+# tabela que só existe a partir de uma migration posterior) que nunca foi
+# exercitada em CI porque test:db também usa o baseline. Local dev acompanha
+# o mesmo caminho que o kit self-host da VPS realmente usa.
+[db.migrations]
+enabled = false
 
 [db.pooler]
 enabled = false
-port = 54329
+port = 64329
 pool_mode = "transaction"
 default_pool_size = 20
 max_client_conn = 100
@@ -28,12 +37,12 @@ enabled = true
 
 [studio]
 enabled = true
-port = 54323
-api_url = "http://127.0.0.1:54321"
+port = 64323
+api_url = "http://127.0.0.1:64321"
 
 [inbucket]
 enabled = true
-port = 54324
+port = 64324
 
 [storage]
 enabled = true
